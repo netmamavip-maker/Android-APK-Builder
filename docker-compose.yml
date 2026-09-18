@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  apk-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./builds:/app/builds
+      - ./projects:/app/projects
+      - ./public:/app/public
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - ANDROID_HOME=/opt/android-sdk
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

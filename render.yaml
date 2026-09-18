@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: apk-builder-studio
+    env: docker
+    dockerfilePath: ./Dockerfile
+    
+    # Build settings
+    buildCommand: npm install
+    startCommand: npm start
+    
+    # Port
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: NODE_ENV
+        value: production
+      - key: ANDROID_HOME
+        value: /opt/android-sdk
+    
+    # Resource allocation
+    plan: standard
+    
+    # Health check
+    healthCheckPath: /
+    
+    # Auto-deploy
+    autoDeploy: true
+    
+    # Build settings
+    maxInstanceCount: 1
+    numInstances: 1
