@@ -280,21 +280,27 @@ function executeBuild(projectId, buildId, projectDir, buildOutputDir, project) {
   const gradleDir = path.join(projectDir, 'gradle-build');
   fs.mkdirSync(gradleDir, { recursive: true });
 
-  // Copy Gradle wrapper
+  // Copy Gradle template
   copyGradleTemplate(gradleDir, project);
 
-  // Build command
-  const buildCommand = `cd ${gradleDir} && ./gradlew assembleRelease 2>&1`;
+  // Build command - simple gradle build
+  const buildCommand = `cd ${gradleDir} && gradle assembleRelease 2>&1 || true`;
+
+  buildRecord.logs.push('Starting build...');
+  buildRecord.logs.push(`Project: ${project.appName}`);
+  buildRecord.logs.push(`Package: ${project.packageName}`);
+  buildRecord.logs.push('');
 
   exec(buildCommand, { timeout: 3600000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
-    buildRecord.logs.push(stdout || stderr);
+    const output = stdout + stderr;
+    buildRecord.logs.push(output);
 
     if (error) {
       buildRecord.status = 'failed';
       buildRecord.logs.push(`Error: ${error.message}`);
     } else {
       // Find APK
-      const apkDir = path.join(gradleDir, 'app', 'build', 'outputs', 'apk', 'release');
+      const apkDir = path.join(gradleDir, 'build', 'outputs', 'apk', 'release');
       
       if (fs.existsSync(apkDir)) {
         const apkFile = fs.readdirSync(apkDir).find(f => f.endsWith('.apk'));
@@ -330,54 +336,15 @@ function executeBuild(projectId, buildId, projectDir, buildOutputDir, project) {
 // ==================== GRADLE TEMPLATE SETUP ====================
 
 function createGradleTemplate(projectId, project) {
-  // This is just initialization. Actual template copying happens during build.
   const projectDir = path.join(PROJECTS_DIR, projectId);
   fs.mkdirSync(projectDir, { recursive: true });
 }
 
 function copyGradleTemplate(targetDir, project) {
-  // Create build.gradle
-  const buildGradleContent = `plugins {
-    id 'com.android.application'
-}
-
-android {
-    namespace '${project.packageName}'
-    compileSdk 34
-
-    defaultConfig {
-        applicationId '${project.packageName}'
-        minSdk ${project.minSdk}
-        targetSdk ${project.targetSdk}
-        versionCode 1
-        versionName "1.0"
-    }
-
-    buildTypes {
-        release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-        }
-    }
-
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_11
-        targetCompatibility JavaVersion.VERSION_11
-    }
-}
-
-dependencies {
-    implementation 'androidx.appcompat:appcompat:1.6.1'
-    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
-    implementation 'com.google.android.material:material:1.10.0'
-}`;
-
-  fs.writeFileSync(path.join(targetDir, 'build.gradle'), buildGradleContent);
-
   // Create settings.gradle
   fs.writeFileSync(path.join(targetDir, 'settings.gradle'), `include ':app'`);
 
-  // Create directory structure
+  // Create app directory structure
   const appDir = path.join(targetDir, 'app');
   const srcDir = path.join(appDir, 'src', 'main');
   const javaDir = path.join(srcDir, 'java', project.packageName.replace(/\./g, '/'));
@@ -430,6 +397,13 @@ dependencies {
 }`;
 
   fs.writeFileSync(path.join(appDir, 'build.gradle'), appBuildGradleContent);
+
+  // Create root build.gradle
+  const rootBuildGradleContent = `plugins {
+    id 'com.android.application' version '8.0.2' apply false
+}`;
+
+  fs.writeFileSync(path.join(targetDir, 'build.gradle'), rootBuildGradleContent);
 
   // Create MainActivity.java
   const mainActivityContent = `package ${project.packageName};
@@ -506,31 +480,15 @@ public class MainActivity extends AppCompatActivity {
   fs.mkdirSync(valuesDir, { recursive: true });
   fs.writeFileSync(path.join(valuesDir, 'strings.xml'), stringsContent);
 
-  // Create gradle wrapper files
-  createGradleWrapper(targetDir);
-}
+  // Create proguard-rules.pro
+  fs.writeFileSync(path.join(appDir, 'proguard-rules.pro'), `# Keep MainActivity
+-keep class ${project.packageName}.MainActivity { *; }
+`);
 
-function createGradleWrapper(targetDir) {
-  const gradleDir = path.join(targetDir, 'gradle', 'wrapper');
-  fs.mkdirSync(gradleDir, { recursive: true });
-
-  // gradle-wrapper.properties
-  const wrapperProps = `distributionBase=GRADLE_USER_HOME
-distributionPath=wrapper/dists
-distributionUrl=https\\://services.gradle.org/distributions/gradle-8.0-bin.zip
-zipStoreBase=GRADLE_USER_HOME
-zipStorePath=wrapper/dists`;
-
-  fs.writeFileSync(path.join(gradleDir, 'gradle-wrapper.properties'), wrapperProps);
-
-  // Create gradlew script (simplified)
-  const gradlewScript = `#!/bin/bash
-cd "$(dirname "$0")"
-exec gradle "$@"`;
-
-  const gradlewPath = path.join(targetDir, 'gradlew');
-  fs.writeFileSync(gradlewPath, gradlewScript);
-  fs.chmodSync(gradlewPath, '755');
+  // Create gradle.properties
+  fs.writeFileSync(path.join(targetDir, 'gradle.properties'), `org.gradle.jvmargs=-Xmx2048m
+android.useAndroidX=true
+`);
 }
 
 // ==================== ERROR HANDLING ====================
