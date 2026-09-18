@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>APK Builder Studio - Complete Android App Builder</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #e2e8f0; }
+        .gradient-bg { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        .card-dark { background: #1e293b; border: 1px solid #334155; border-radius: 12px; }
+        .btn-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        .btn-primary:hover { opacity: 0.9; }
+        .loading { animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+        .modal-content { background: #1e293b; border-radius: 16px; max-width: 600px; width: 90%; max-height: 90vh; overflow-y-auto; }
+        .success-badge { background: #10b981; }
+        .error-badge { background: #ef4444; }
+        .warning-badge { background: #f59e0b; }
+        .info-badge { background: #3b82f6; }
+    </style>
+</head>
+<body>
+    <div id="app"></div>
+
+    <script>
+        const API_BASE = '/api';
+        let currentProject = null;
+        let projects = [];
+
+        // ==================== INITIALIZATION ====================
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            loadProjects();
+            renderUI('dashboard');
+        });
+
+        // ==================== API CALLS ====================
+
+        async function apiCall(endpoint, method = 'GET', data = null) {
+            try {
+                const options = {
+                    method,
+                    headers: { 'Content-Type': 'application/json' }
+                };
+                if (data) options.body = JSON.stringify(data);
+                
+                const response = await fetch(`${API_BASE}${endpoint}`, options);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return await response.json();
+            } catch (error) {
+                showNotification(`Error: ${error.message}`, 'error');
+                return null;
+            }
+        }
+
+        async function uploadFile(projectId, file) {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('projectId', projectId);
+
+            try {
+                const response = await fetch(`${API_BASE}/upload/${projectId}`, {
+                    method: 'POST',
+                    body: formData
+                });
+                return await response.json();
+            } catch (error) {
+                showNotification(`Upload error: ${error.message}`, 'error');
+                return null;
+            }
+        }
+
+        async function loadProjects() {
+            const result = await apiCall('/projects');
+            if (result) projects = result.projects;
+        }
+
+        async function createProject(formData) {
+            const result = await apiCall('/create-project', 'POST', formData);
+            if (result && result.success) {
+                currentProject = result.projectId;
+                await loadProjects();
+                showNotification('Project created successfully!', 'success');
+                setTimeout(() => renderUI('editor'), 500);
+            }
+        }
+
+        async function triggerBuild() {
+            if (!currentProject) return;
+            const result = await apiCall(`/build/${currentProject}`, 'POST', {});
+            if (result && result.success) {
+                showNotification('Build started! This may take 5-15 minutes...', 'info');
+                checkBuildStatus(result.buildId);
+            }
+        }
+
+        async function checkBuildStatus(buildId) {
+            if (!currentProject) return;
+            const result = await apiCall(`/build/${currentProject}/${buildId}`);
+            if (result) {
+                if (result.status === 'building') {
+                    setTimeout(() => checkBuildStatus(buildId), 3000);
+                } else if (result.status === 'success') {
+                    showNotification('Build completed! APK ready for download.', 'success');
+                    renderBuildResult(result, buildId);
+                } else {
+                    showNotification('Build failed. Check logs.', 'error');
+                    showLogs(result.logs);
+                }
+            }
+        }
+
+        async function deleteProject(projectId) {
+            if (!confirm('Are you sure? This cannot be undone.')) return;
+            const result = await apiCall(`/project/${projectId}`, 'DELETE');
+            if (result && result.success) {
+                await loadProjects();
+                showNotification('Project deleted', 'info');
+                renderUI('dashboard');
+            }
+        }
+
+        // ==================== UI RENDERING ====================
+
+        function renderUI(view) {
+            const app = document.getElementById('app');
+            
+            if (view === 'dashboard') {
+                app.innerHTML = renderDashboard();
+            } else if (view === 'editor') {
+                app.innerHTML = renderEditor();
+            }
+        }
+
+        function renderDashboard() {
+            return `
+            <div class="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800">
+                <!-- Header -->
+                <div class="gradient-bg text-white p-8">
+                    <div class="max-w-6xl mx-auto">
+                        <h1 class="text-4xl font-bold mb-2">
+                            <i class="fas fa-android mr-3"></i>APK Builder Studio
+                        </h1>
+                        <p class="text-lg opacity-90">Complete Android APK Builder - Web Based</p>
+                    </div>
+                </div>
+
+                <div class="max-w-6xl mx-auto p-8">
+                    <!-- New Project Button -->
+                    <button onclick="showCreateProjectModal()" class="btn-primary text-white px-6 py-3 rounded-lg font-bold mb-8 flex items-center gap-2">
+                        <i class="fas fa-plus"></i> New Project
+                    </button>
+
+                    <!-- Projects Grid -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        ${projects.length === 0 ? `
+                            <div class="card-dark p-8 text-center col-span-full">
+                                <i class="fas fa-folder-open text-4xl mb-4 opacity-50"></i>
+                                <p class="text-gray-400">No projects yet. Create your first one!</p>
+                            </div>
+                        ` : projects.map(p => `
+                            <div class="card-dark p-6 hover:border-purple-500 transition cursor-pointer" onclick="openProject('${p.projectId}')">
+                                <div class="flex justify-between items-start mb-4">
+                                    <div>
+                                        <h3 class="text-xl font-bold">${p.appName}</h3>
+                                        <p class="text-gray-400 text-sm">${p.packageName}</p>
+                                    </div>
+                                    <button onclick="event.stopPropagation(); deleteProject('${p.projectId}')" class="text-red-500 hover:text-red-600">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                                <div class="text-sm text-gray-400">
+                                    <p>Created: ${new Date(p.createdAt).toLocaleDateString()}</p>
+                                    ${p.latestBuild ? `<p class="mt-2"><span class="success-badge text-white px-2 py-1 rounded text-xs">${p.latestBuild.status.toUpperCase()}</span></p>` : ''}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Create Project Modal -->
+            <div id="createModal" class="hidden modal-overlay" onclick="if(event.target === this) this.classList.add('hidden')">
+                <div class="modal-content p-8">
+                    <h2 class="text-2xl font-bold mb-6 flex items-center gap-2">
+                        <i class="fas fa-plus"></i> New Project
+                    </h2>
+                    <form onsubmit="event.preventDefault(); handleCreateProject(this)">
+                        <div class="mb-4">
+                            <label class="block text-sm font-semibold mb-2">App Name</label>
+                            <input type="text" required placeholder="MyApp" class="w-full bg-slate-700 border border-slate-600 rounded-lg p-3 text-white placeholder-gray-400" id="appName">
+                        </div>
+                        <div class="mb-4">
+                            <label class="block text-sm font-semibold mb-2">Package Name</label>
+                            <input type="text" required placeholder="com.example.myapp" class="w-full bg-slate-700 border border-slate-600 rounded-lg p-3 text-white placeholder-gray-400" id="packageName">
+                        </div>
+                        <div class="grid grid-cols-2 gap-4 mb-6">
+                            <div>
+                                <label class="block text-sm font-semibold mb-2">Min SDK</label>
+                                <input type="number" value="21" class="w-full bg-slate-700 border border-slate-600 rounded-lg p-3 text-white" id="minSdk">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold mb-2">Target SDK</label>
+                                <input type="number" value="34" class="w-full bg-slate-700 border border-slate-600 rounded-lg p-3 text-white" id="targetSdk">
+                            </div>
+                        </div>
+                        <div class="flex gap-4">
+                            <button type="submit" class="flex-1 btn-primary text-white font-bold py-3 rounded-lg">Create Project</button>
+                            <button type="button" onclick="document.getElementById('createModal').classList.add('hidden')" class="flex-1 bg-slate-700 text-white font-bold py-3 rounded-lg">Cancel</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            `;
+        }
+
+        function renderEditor() {
+            if (!currentProject) return '';
+            const project = projects.find(p => p.projectId === currentProject);
+            if (!project) return '';
+
+            return `
+            <div class="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800">
+                <!-- Header -->
+                <div class="gradient-bg text-white p-6 flex justify-between items-center">
+                    <div>
+                        <h2 class="text-2xl font-bold">${project.appName}</h2>
+                        <p class="text-sm opacity-75">${project.packageName}</p>
+                    </div>
+                    <button onclick="renderUI('dashboard')" class="btn-primary text-white px-4 py-2 rounded-lg font-semibold flex items-center gap-2">
+                        <i class="fas fa-arrow-left"></i> Back
+                    </button>
+                </div>
+
+                <div class="max-w-6xl mx-auto p-8">
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                        <!-- File Manager -->
+                        <div class="lg:col-span-2">
+                            <div class="card-dark p-6 mb-8">
+                                <h3 class="text-xl font-bold mb-4 flex items-center gap-2">
+                                    <i class="fas fa-file-upload"></i> Upload Project Files
+                                </h3>
+                                <div class="border-2 border-dashed border-slate-600 rounded-lg p-8 text-center cursor-pointer hover:border-purple-500 transition" id="dropZone">
+                                    <i class="fas fa-cloud-upload-alt text-4xl text-purple-400 mb-4"></i>
+                                    <p class="text-lg font-semibold mb-2">Drag & drop files here</p>
+                                    <p class="text-gray-400 mb-4">or click to browse</p>
+                                    <input type="file" multiple id="fileInput" class="hidden" onchange="handleFileSelect(event)">
+                                    <button type="button" class="btn-primary text-white px-4 py-2 rounded-lg" onclick="document.getElementById('fileInput').click()">
+                                        Browse Files
+                                    </button>
+                                </div>
+
+                                <!-- Files List -->
+                                <div id="filesList" class="mt-6"></div>
+                            </div>
+
+                            <!-- Build Configuration -->
+                            <div class="card-dark p-6">
+                                <h3 class="text-xl font-bold mb-4 flex items-center gap-2">
+                                    <i class="fas fa-cog"></i> Build Configuration
+                                </h3>
+                                <div class="bg-slate-700 p-4 rounded-lg mb-4 text-sm">
+                                    <p><span class="font-semibold">App Name:</span> ${project.appName}</p>
+                                    <p><span class="font-semibold">Package:</span> ${project.packageName}</p>
+                                    <p><span class="font-semibold">Min SDK:</span> ${project.minSdk}</p>
+                                    <p><span class="font-semibold">Target SDK:</span> ${project.targetSdk}</p>
+                                </div>
+                                <button onclick="triggerBuild()" class="w-full btn-primary text-white font-bold py-3 rounded-lg text-lg flex items-center justify-center gap-2">
+                                    <i class="fas fa-hammer"></i> BUILD APK NOW
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Build Logs & Info -->
+                        <div class="card-dark p-6">
+                            <h3 class="text-xl font-bold mb-4 flex items-center gap-2">
+                                <i class="fas fa-terminal"></i> Build Info
+                            </h3>
+                            <div class="bg-slate-700 p-4 rounded-lg text-xs space-y-2">
+                                <p><i class="fas fa-info-circle text-blue-400"></i> Click BUILD APK to start compilation</p>
+                                <p><i class="fas fa-clock text-orange-400"></i> First build: 5-10 minutes</p>
+                                <p><i class="fas fa-bolt text-yellow-400"></i> Next builds: 2-5 minutes</p>
+                                <p><i class="fas fa-download text-green-400"></i> Download APK when ready</p>
+                            </div>
+
+                            <div id="logsContainer" class="mt-6 hidden">
+                                <h4 class="font-bold mb-2">Build Logs:</h4>
+                                <div id="logs" class="bg-black rounded-lg p-3 text-xs font-mono h-96 overflow-y-auto"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            `;
+        }
+
+        // ==================== EVENT HANDLERS ====================
+
+        function showCreateProjectModal() {
+            document.getElementById('createModal').classList.remove('hidden');
+        }
+
+        async function handleCreateProject(form) {
+            const data = {
+                appName: document.getElementById('appName').value,
+                packageName: document.getElementById('packageName').value,
+                minSdk: parseInt(document.getElementById('minSdk').value),
+                targetSdk: parseInt(document.getElementById('targetSdk').value)
+            };
+            document.getElementById('createModal').classList.add('hidden');
+            await createProject(data);
+        }
+
+        function openProject(projectId) {
+            currentProject = projectId;
+            renderUI('editor');
+            loadProjectFiles();
+        }
+
+        async function loadProjectFiles() {
+            if (!currentProject) return;
+            const result = await apiCall(`/project/${currentProject}/files`);
+            if (result) {
+                const filesList = document.getElementById('filesList');
+                if (filesList && Object.keys(result.files).length > 0) {
+                    filesList.innerHTML = `
+                    <h4 class="font-bold mt-6 mb-3">Uploaded Files:</h4>
+                    <ul class="space-y-2">
+                        ${Object.entries(result.files).map(([name, info]) => `
+                            <li class="bg-slate-700 p-3 rounded-lg flex justify-between items-center">
+                                <span><i class="fas fa-file text-purple-400 mr-2"></i>${name}</span>
+                                <button onclick="deleteFile('${currentProject}', '${name}')" class="text-red-500 hover:text-red-600">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </li>
+                        `).join('')}
+                    </ul>
+                    `;
+                }
+            }
+        }
+
+        async function handleFileSelect(event) {
+            const files = event.target.files;
+            if (!currentProject) {
+                showNotification('No project selected', 'error');
+                return;
+            }
+            for (let file of files) {
+                showNotification(`Uploading ${file.name}...`, 'info');
+                await uploadFile(currentProject, file);
+            }
+            await loadProjectFiles();
+        }
+
+        async function deleteFile(projectId, filename) {
+            const result = await apiCall(`/project/${projectId}/file/${filename}`, 'DELETE');
+            if (result && result.success) {
+                showNotification('File deleted', 'info');
+                await loadProjectFiles();
+            }
+        }
+
+        function renderBuildResult(buildResult, buildId) {
+            showNotification(`Build Result: ${buildResult.status}`, buildResult.status === 'success' ? 'success' : 'error');
+            if (buildResult.apkPath) {
+                const logsContainer = document.getElementById('logsContainer');
+                if (logsContainer) {
+                    logsContainer.classList.remove('hidden');
+                    const logsDiv = document.getElementById('logs');
+                    if (logsDiv) {
+                        logsDiv.innerHTML = `
+                        <div class="text-green-400">✓ Build successful!</div>
+                        <div class="mt-2"><a href="${buildResult.apkPath}" class="text-blue-400 hover:underline">📥 Download APK</a></div>
+                        <div class="mt-4 text-gray-400">${buildResult.logs.join('<br>')}</div>
+                        `;
+                    }
+                }
+            }
+        }
+
+        function showLogs(logs) {
+            const logsContainer = document.getElementById('logsContainer');
+            if (logsContainer) {
+                logsContainer.classList.remove('hidden');
+                const logsDiv = document.getElementById('logs');
+                if (logsDiv) {
+                    logsDiv.innerHTML = logs.map(log => `<div>${log}</div>`).join('');
+                }
+            }
+        }
+
+        function showNotification(message, type = 'info') {
+            const notification = document.createElement('div');
+            notification.className = `fixed top-4 right-4 text-white px-6 py-3 rounded-lg font-semibold flex items-center gap-2 ${
+                type === 'success' ? 'success-badge' : 
+                type === 'error' ? 'error-badge' : 
+                type === 'warning' ? 'warning-badge' : 
+                'info-badge'
+            }`;
+            notification.innerHTML = `
+                <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : type === 'warning' ? 'warning' : 'info-circle'}"></i>
+                ${message}
+            `;
+            document.body.appendChild(notification);
+            setTimeout(() => notification.remove(), 4000);
+        }
+
+        // Drag & drop
+        const dropZone = document.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            const dz = document.getElementById('dropZone');
+            if (dz) dz.classList.add('border-purple-500', 'bg-purple-500/10');
+        });
+
+        document.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            const dz = document.getElementById('dropZone');
+            if (dz) dz.classList.remove('border-purple-500', 'bg-purple-500/10');
+        });
+
+        document.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const dz = document.getElementById('dropZone');
+            if (dz) dz.classList.remove('border-purple-500', 'bg-purple-500/10');
+            
+            if (!currentProject) {
+                showNotification('No project selected', 'error');
+                return;
+            }
+
+            const files = e.dataTransfer.files;
+            document.getElementById('fileInput').files = files;
+            handleFileSelect({ target: { files } });
+        });
+    </script>
+</body>
+</html>
